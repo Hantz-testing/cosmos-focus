@@ -37,6 +37,9 @@
     let mouseX = -100;
     let mouseY = -100;
     let mouseVisible = false;
+    let clickPulses = [];
+    let cursorClickFlash = 0;
+    let lastFrameTime = 0;
 
     function resize() {
       dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -300,20 +303,64 @@
         ctx.fill();
       }
 
+      drawClickPulses();
+
       if (mouseVisible) {
         if (CURSOR_MODE === 'star') drawStarCursor(t, mouseX, mouseY);
         else drawBlackHoleCursor(t, mouseX, mouseY);
       }
     }
 
+    function spawnClickPulse(x, y) {
+      clickPulses.push({ x, y, age: 0, duration: 1000 });
+      cursorClickFlash = 1;
+    }
+
+    function updateEffects(dt) {
+      clickPulses = clickPulses.filter((p) => {
+        p.age += dt;
+        return p.age < p.duration;
+      });
+      if (cursorClickFlash > 0) {
+        cursorClickFlash = Math.max(0, cursorClickFlash - dt / 450);
+      }
+    }
+
+    function drawClickPulses() {
+      for (const p of clickPulses) {
+        const prog = p.age / p.duration;
+        const ease = 1 - Math.pow(1 - prog, 2);
+        const alpha = (1 - prog) * 0.42;
+
+        const fill = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, 10 + ease * 48);
+        fill.addColorStop(0, `rgba(255, 255, 255, ${alpha * 0.55})`);
+        fill.addColorStop(0.35, `rgba(230, 240, 255, ${alpha * 0.25})`);
+        fill.addColorStop(1, 'rgba(255, 255, 255, 0)');
+        ctx.fillStyle = fill;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 10 + ease * 48, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.strokeStyle = `rgba(255, 255, 255, ${alpha * 0.5})`;
+        ctx.lineWidth = 1.5 * (1 - prog * 0.6);
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 6 + ease * 36, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
+
     function drawBlackHoleCursor(t, x, y) {
+      const idle = 0.9 + Math.sin(t * 0.0032) * 0.1;
+      const flash = 1 + cursorClickFlash * 0.45;
+
       ctx.save();
       ctx.translate(x, y);
+      ctx.scale(idle * flash, idle * flash);
       ctx.rotate(t * 0.0008);
 
       const outer = ctx.createRadialGradient(0, 0, 2, 0, 0, 20);
-      outer.addColorStop(0, 'rgba(50, 140, 255, 0.12)');
-      outer.addColorStop(0.5, 'rgba(30, 90, 200, 0.05)');
+      outer.addColorStop(0, `rgba(50, 140, 255, ${0.12 + cursorClickFlash * 0.18})`);
+      outer.addColorStop(0.5, `rgba(30, 90, 200, ${0.05 + cursorClickFlash * 0.1})`);
       outer.addColorStop(1, 'rgba(0, 0, 0, 0)');
       ctx.fillStyle = outer;
       ctx.beginPath();
@@ -361,21 +408,24 @@
 
     // Saved alternative: soft glowing star cursor (set CURSOR_MODE = 'star')
     function drawStarCursor(t, x, y) {
-      const tw = 0.85 + Math.sin(t * 0.004) * 0.15;
+      const tw = 0.82 + Math.sin(t * 0.004) * 0.18;
+      const flash = 1 + cursorClickFlash * 0.5;
       ctx.save();
       ctx.translate(x, y);
+      ctx.scale(flash, flash);
 
-      const halo = ctx.createRadialGradient(0, 0, 0, 0, 0, 14);
-      halo.addColorStop(0, `rgba(200, 230, 255, ${0.35 * tw})`);
-      halo.addColorStop(0.4, `rgba(120, 190, 255, ${0.12 * tw})`);
+      const halo = ctx.createRadialGradient(0, 0, 0, 0, 0, 14 + cursorClickFlash * 6);
+      halo.addColorStop(0, `rgba(255, 255, 255, ${(0.3 + cursorClickFlash * 0.35) * tw})`);
+      halo.addColorStop(0.35, `rgba(200, 230, 255, ${(0.2 + cursorClickFlash * 0.15) * tw})`);
+      halo.addColorStop(0.6, `rgba(120, 190, 255, ${0.12 * tw})`);
       halo.addColorStop(1, 'rgba(0, 0, 0, 0)');
       ctx.fillStyle = halo;
       ctx.beginPath();
-      ctx.arc(0, 0, 14, 0, Math.PI * 2);
+      ctx.arc(0, 0, 14 + cursorClickFlash * 6, 0, Math.PI * 2);
       ctx.fill();
 
       const star = ctx.createRadialGradient(-0.5, -0.5, 0, 0, 0, 4);
-      star.addColorStop(0, `rgba(255, 255, 255, ${tw})`);
+      star.addColorStop(0, `rgba(255, 255, 255, ${Math.min(1, tw + cursorClickFlash * 0.4)})`);
       star.addColorStop(0.5, `rgba(200, 230, 255, ${0.8 * tw})`);
       star.addColorStop(1, 'rgba(100, 170, 255, 0)');
       ctx.fillStyle = star;
@@ -387,6 +437,9 @@
     }
 
     function frame(t) {
+      const dt = lastFrameTime ? t - lastFrameTime : 16;
+      lastFrameTime = t;
+      updateEffects(dt);
       draw(t);
       requestAnimationFrame(frame);
     }
@@ -556,10 +609,20 @@
       mouseVisible = false;
     });
 
-    canvas.addEventListener('click', toggleAudio);
+    function handlePointerDown(clientX, clientY) {
+      const rect = canvas.getBoundingClientRect();
+      spawnClickPulse(clientX - rect.left, clientY - rect.top);
+      toggleAudio();
+    }
+
+    canvas.addEventListener('click', (e) => {
+      handlePointerDown(e.clientX, e.clientY);
+    });
+
     canvas.addEventListener('touchstart', (e) => {
       e.preventDefault();
-      toggleAudio();
+      const touch = e.touches[0];
+      if (touch) handlePointerDown(touch.clientX, touch.clientY);
     }, { passive: false });
   </script>
 </body>
