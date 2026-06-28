@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title> </title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+      cursor: crosshair;
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="cosmos"></canvas>
+  <script>
+    const canvas = document.getElementById('cosmos');
+    const ctx = canvas.getContext('2d');
+
+    let width, height, cx, cy, dpr;
+    let time = 0;
+    let audioStarted = false;
+    let audioCtx = null;
+    let masterGain = null;
+
+    function resize() {
+      dpr = Math.min(window.devicePixelRatio || 1, 2);
+      width = window.innerWidth;
+      height = window.innerHeight;
+      canvas.width = width * dpr;
+      canvas.height = height * dpr;
+      canvas.style.width = width + 'px';
+      canvas.style.height = height + 'px';
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      cx = width / 2;
+      cy = height / 2;
+    }
+
+    window.addEventListener('resize', resize);
+    resize();
+
+    // --- Nebula clouds ---
+    const nebulae = Array.from({ length: 5 }, (_, i) => ({
+      x: Math.random(),
+      y: Math.random(),
+      radius: 0.25 + Math.random() * 0.35,
+      hue: [240, 260, 280, 200, 320][i % 5],
+      drift: (Math.random() - 0.5) * 0.00008,
+      pulse: Math.random() * Math.PI * 2,
+    }));
+
+    // --- Star layers (parallax warp) ---
+    function createStars(count, speed, sizeRange) {
+      return Array.from({ length: count }, () => ({
+        x: Math.random() * width - cx,
+        y: Math.random() * height - cy,
+        z: Math.random(),
+        speed,
+        size: sizeRange[0] + Math.random() * (sizeRange[1] - sizeRange[0]),
+        twinkle: Math.random() * Math.PI * 2,
+      }));
+    }
+
+    let starsNear, starsMid, starsFar;
+
+    function initStars() {
+      const area = width * height;
+      const density = area / 1800;
+      starsFar = createStars(Math.floor(density * 0.5), 0.35, [0.3, 0.8]);
+      starsMid = createStars(Math.floor(density * 0.35), 0.7, [0.5, 1.2]);
+      starsNear = createStars(Math.floor(density * 0.2), 1.4, [0.8, 2.2]);
+    }
+
+    initStars();
+    window.addEventListener('resize', initStars);
+
+    // --- Distant planet ---
+    const planet = {
+      angle: 0.4,
+      dist: 0.72,
+      radius: 0.09,
+      hue: 210,
+    };
+
+    // --- Shooting stars ---
+    const meteors = [];
+    function maybeSpawnMeteor() {
+      if (Math.random() < 0.002 && meteors.length < 2) {
+        const angle = Math.random() * 0.5 + 0.2;
+        meteors.push({
+          x: Math.random() * width,
+          y: Math.random() * height * 0.4,
+          vx: Math.cos(angle) * (4 + Math.random() * 3),
+          vy: Math.sin(angle) * (4 + Math.random() * 3),
+          life: 1,
+          len: 40 + Math.random() * 80,
+        });
+      }
+    }
+
+    function drawNebulae(t) {
+      for (const n of nebulae) {
+        n.x += n.drift;
+        if (n.x < -0.2) n.x = 1.2;
+        if (n.x > 1.2) n.x = -0.2;
+        const pulse = 0.85 + Math.sin(t * 0.0003 + n.pulse) * 0.15;
+        const px = n.x * width;
+        const py = n.y * height;
+        const r = n.radius * Math.min(width, height) * pulse;
+        const g = ctx.createRadialGradient(px, py, 0, px, py, r);
+        g.addColorStop(0, `hsla(${n.hue}, 70%, 45%, 0.12)`);
+        g.addColorStop(0.4, `hsla(${n.hue + 20}, 60%, 30%, 0.06)`);
+        g.addColorStop(1, 'hsla(240, 50%, 10%, 0)');
+        ctx.fillStyle = g;
+        ctx.fillRect(px - r, py - r, r * 2, r * 2);
+      }
+    }
+
+    function drawPlanet(t) {
+      const orbitR = Math.min(width, height) * planet.dist;
+      const px = cx + Math.cos(planet.angle + t * 0.00002) * orbitR * 0.15;
+      const py = cy + Math.sin(planet.angle + t * 0.00002) * orbitR * 0.08 + orbitR * 0.1;
+      const r = Math.min(width, height) * planet.radius;
+
+      const glow = ctx.createRadialGradient(px, py, r * 0.5, px, py, r * 3);
+      glow.addColorStop(0, `hsla(${planet.hue}, 50%, 50%, 0.08)`);
+      glow.addColorStop(1, 'transparent');
+      ctx.fillStyle = glow;
+      ctx.beginPath();
+      ctx.arc(px, py, r * 3, 0, Math.PI * 2);
+      ctx.fill();
+
+      const body = ctx.createRadialGradient(px - r * 0.3, py - r * 0.3, r * 0.1, px, py, r);
+      body.addColorStop(0, `hsla(${planet.hue}, 40%, 65%, 0.5)`);
+      body.addColorStop(0.6, `hsla(${planet.hue}, 50%, 35%, 0.35)`);
+      body.addColorStop(1, `hsla(${planet.hue}, 60%, 15%, 0.2)`);
+      ctx.fillStyle = body;
+      ctx.beginPath();
+      ctx.arc(px, py, r, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.strokeStyle = `hsla(${planet.hue}, 60%, 70%, 0.15)`;
+      ctx.lineWidth = 1.5;
+      ctx.save();
+      ctx.translate(px, py);
+      ctx.scale(1, 0.22);
+      ctx.beginPath();
+      ctx.ellipse(0, 0, r * 1.8, r * 1.8, t * 0.00005, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function drawStarLayer(stars, t, warp) {
+      for (const s of stars) {
+        s.z -= s.speed * 0.004 * warp;
+        if (s.z <= 0) {
+          s.z = 1;
+          s.x = Math.random() * width - cx;
+          s.y = Math.random() * height - cy;
+        }
+
+        const perspective = 1 / s.z;
+        const sx = cx + s.x * perspective;
+        const sy = cy + s.y * perspective;
+        const streak = (1 - s.z) * s.speed * 18 * warp;
+        const tw = 0.6 + Math.sin(t * 0.002 + s.twinkle) * 0.4;
+        const alpha = Math.min(1, (1 - s.z) * 1.8 + 0.1) * tw;
+        const size = s.size * perspective * 0.8;
+
+        if (sx < -50 || sx > width + 50 || sy < -50 || sy > height + 50) continue;
+
+        const tailX = sx - (s.x / s.z) * streak * 0.02;
+        const tailY = sy - (s.y / s.z) * streak * 0.02;
+
+        const grad = ctx.createLinearGradient(tailX, tailY, sx, sy);
+        grad.addColorStop(0, `rgba(180, 210, 255, 0)`);
+        grad.addColorStop(1, `rgba(220, 235, 255, ${alpha})`);
+
+        ctx.strokeStyle = grad;
+        ctx.lineWidth = Math.max(0.5, size);
+        ctx.beginPath();
+        ctx.moveTo(tailX, tailY);
+        ctx.lineTo(sx, sy);
+        ctx.stroke();
+
+        ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
+        ctx.beginPath();
+        ctx.arc(sx, sy, size * 0.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    function drawMeteors() {
+      for (let i = meteors.length - 1; i >= 0; i--) {
+        const m = meteors[i];
+        m.x += m.vx;
+        m.y += m.vy;
+        m.life -= 0.012;
+
+        const g = ctx.createLinearGradient(
+          m.x, m.y,
+          m.x - m.vx * m.len * 0.15, m.y - m.vy * m.len * 0.15
+        );
+        g.addColorStop(0, `rgba(255, 255, 255, ${m.life * 0.7})`);
+        g.addColorStop(1, 'rgba(150, 200, 255, 0)');
+
+        ctx.strokeStyle = g;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(m.x, m.y);
+        ctx.lineTo(m.x - m.vx * m.len * 0.15, m.y - m.vy * m.len * 0.15);
+        ctx.stroke();
+
+        if (m.life <= 0) meteors.splice(i, 1);
+      }
+    }
+
+    function drawVignette() {
+      const v = ctx.createRadialGradient(cx, cy, Math.min(width, height) * 0.2, cx, cy, Math.max(width, height) * 0.75);
+      v.addColorStop(0, 'rgba(0, 0, 0, 0)');
+      v.addColorStop(1, 'rgba(0, 0, 0, 0.55)');
+      ctx.fillStyle = v;
+      ctx.fillRect(0, 0, width, height);
+    }
+
+    function draw(t) {
+      const warp = 0.85 + Math.sin(t * 0.0004) * 0.15;
+
+      const bg = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(width, height) * 0.9);
+      bg.addColorStop(0, '#0a0a1a');
+      bg.addColorStop(0.4, '#060612');
+      bg.addColorStop(1, '#010108');
+      ctx.fillStyle = bg;
+      ctx.fillRect(0, 0, width, height);
+
+      drawNebulae(t);
+      drawPlanet(t);
+      drawStarLayer(starsFar, t, warp * 0.6);
+      drawStarLayer(starsMid, t, warp);
+      drawStarLayer(starsNear, t, warp * 1.3);
+      maybeSpawnMeteor();
+      drawMeteors();
+      drawVignette();
+
+      if (!audioStarted) {
+        const pulse = 0.03 + Math.sin(t * 0.003) * 0.02;
+        const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, 40);
+        g.addColorStop(0, `rgba(120, 180, 255, ${pulse})`);
+        g.addColorStop(1, 'rgba(120, 180, 255, 0)');
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(cx, cy, 40, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    function frame(t) {
+      time = t;
+      draw(t);
+      requestAnimationFrame(frame);
+    }
+
+    requestAnimationFrame(frame);
+
+    // --- Procedural ambient space audio (Web Audio API) ---
+    function startAudio() {
+      if (audioStarted) return;
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+      masterGain = audioCtx.createGain();
+      masterGain.gain.setValueAtTime(0, audioCtx.currentTime);
+      masterGain.gain.linearRampToValueAtTime(0.22, audioCtx.currentTime + 4);
+      masterGain.connect(audioCtx.destination);
+
+      const masterFilter = audioCtx.createBiquadFilter();
+      masterFilter.type = 'lowpass';
+      masterFilter.frequency.value = 2800;
+      masterFilter.Q.value = 0.4;
+      masterFilter.connect(masterGain);
+
+      // Deep space drone
+      const droneNotes = [55, 82.41, 110, 164.81];
+      droneNotes.forEach((freq, i) => {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        const lfo = audioCtx.createOscillator();
+        const lfoGain = audioCtx.createGain();
+
+        osc.type = i % 2 === 0 ? 'sine' : 'triangle';
+        osc.frequency.value = freq;
+        gain.gain.value = 0.04 / (i + 1);
+
+        lfo.frequency.value = 0.03 + i * 0.01;
+        lfoGain.gain.value = 3 + i;
+        lfo.connect(lfoGain);
+        lfoGain.connect(osc.frequency);
+        lfo.start();
+
+        osc.connect(gain);
+        gain.connect(masterFilter);
+        osc.start();
+      });
+
+      // Soft cosmic pad
+      const padOsc = audioCtx.createOscillator();
+      const padGain = audioCtx.createGain();
+      const padFilter = audioCtx.createBiquadFilter();
+      padOsc.type = 'sawtooth';
+      padOsc.frequency.value = 220;
+      padFilter.type = 'lowpass';
+      padFilter.frequency.value = 400;
+      padGain.gain.value = 0.018;
+      padOsc.connect(padFilter);
+      padFilter.connect(padGain);
+      padGain.connect(masterFilter);
+      padOsc.start();
+
+      const padLfo = audioCtx.createOscillator();
+      const padLfoGain = audioCtx.createGain();
+      padLfo.frequency.value = 0.05;
+      padLfoGain.gain.value = 80;
+      padLfo.connect(padLfoGain);
+      padLfoGain.connect(padFilter.frequency);
+      padLfo.start();
+
+      // Gentle arpeggio — calm electronic motif
+      const arpNotes = [220, 261.63, 329.63, 392, 329.63, 261.63];
+      let arpIndex = 0;
+
+      function playArpNote() {
+        const freq = arpNotes[arpIndex % arpNotes.length];
+        arpIndex++;
+
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        const filter = audioCtx.createBiquadFilter();
+
+        osc.type = 'sine';
+        osc.frequency.value = freq;
+        filter.type = 'lowpass';
+        filter.frequency.value = 1200;
+
+        const now = audioCtx.currentTime;
+        gain.gain.setValueAtTime(0, now);
+        gain.gain.linearRampToValueAtTime(0.035, now + 0.8);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 5);
+
+        osc.connect(filter);
+        filter.connect(gain);
+        gain.connect(masterFilter);
+
+        osc.start(now);
+        osc.stop(now + 5.5);
+
+        setTimeout(playArpNote, 2800 + Math.random() * 1200);
+      }
+
+      setTimeout(playArpNote, 1500);
+
+      // Subtle space wind (filtered noise)
+      const bufferSize = audioCtx.sampleRate * 2;
+      const noiseBuffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+      const data = noiseBuffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) {
+        data[i] = (Math.random() * 2 - 1) * 0.5;
+      }
+
+      const noise = audioCtx.createBufferSource();
+      noise.buffer = noiseBuffer;
+      noise.loop = true;
+
+      const noiseFilter = audioCtx.createBiquadFilter();
+      noiseFilter.type = 'bandpass';
+      noiseFilter.frequency.value = 180;
+      noiseFilter.Q.value = 0.8;
+
+      const noiseGain = audioCtx.createGain();
+      noiseGain.gain.value = 0.012;
+
+      const noiseLfo = audioCtx.createOscillator();
+      const noiseLfoGain = audioCtx.createGain();
+      noiseLfo.frequency.value = 0.08;
+      noiseLfoGain.gain.value = 60;
+      noiseLfo.connect(noiseLfoGain);
+      noiseLfoGain.connect(noiseFilter.frequency);
+      noiseLfo.start();
+
+      noise.connect(noiseFilter);
+      noiseFilter.connect(noiseGain);
+      noiseGain.connect(masterFilter);
+      noise.start();
+
+      audioStarted = true;
+    }
+
+    function toggleAudio() {
+      if (!audioStarted) {
+        startAudio();
+      } else if (audioCtx && masterGain) {
+        const muted = masterGain.gain.value < 0.01;
+        const now = audioCtx.currentTime;
+        masterGain.gain.cancelScheduledValues(now);
+        masterGain.gain.setValueAtTime(masterGain.gain.value, now);
+        masterGain.gain.linearRampToValueAtTime(muted ? 0.22 : 0, now + 1.5);
+      }
+    }
+
+    canvas.addEventListener('click', toggleAudio);
+    canvas.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      toggleAudio();
+    }, { passive: false });
+  </script>
+</body>
+</html>
