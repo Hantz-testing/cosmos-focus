@@ -408,7 +408,7 @@
 
     // Saved alternative: soft glowing star cursor (set CURSOR_MODE = 'star')
     function drawStarCursor(t, x, y) {
-      const tw = 0.82 + Math.sin(t * 0.004) * 0.18;
+      const tw = 0.86 + Math.sin(t * 0.0012) * 0.14;
       const flash = 1 + cursorClickFlash * 0.5;
       ctx.save();
       ctx.translate(x, y);
